@@ -1,0 +1,6 @@
+[package]
+name = "TestArgs"
+version = "0.1.0"
+authors = ["Mark Pauley <mpauley@apple.com>"]
+
+[dependencies]
