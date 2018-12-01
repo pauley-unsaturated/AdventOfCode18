@@ -11,14 +11,14 @@ fn main() -> io::Result<()> {
         let mut first_time = true;
         let mut freq : i32 = 0;
         let mut seen : HashSet<i32> = HashSet::new();
-
+        let file = File::open(&file_name)?;
+        let input = BufReader::new(file);
+        let lines : Vec<i32> = input.lines().map(|x| { x.unwrap().parse::<i32>().unwrap() }).collect();
+        
         loop {
-            let mut f = File::open(&file_name)?;
-            let input = BufReader::new(f);
             
-            for line_opt in input.lines() {
-                let line = line_opt?;
-                freq += line.parse::<i32>().unwrap();
+            for line in &lines {
+                freq += line;
                 if seen.contains(&freq) {
                     println!("Part 2: {}", freq);
                     return Ok(());
