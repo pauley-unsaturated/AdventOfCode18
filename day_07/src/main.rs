@@ -4,7 +4,6 @@ use std::io;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::fs::File;
-//use std::collections::HashMap;
 use std::collections::HashSet;
 
 use regex::Regex;
@@ -100,5 +99,4 @@ fn main() -> io::Result<()> {
         println!("Usage: {} <input_file>", prog_name.unwrap());
     }
     Ok(())        
-
 }
