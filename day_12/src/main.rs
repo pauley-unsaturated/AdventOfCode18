@@ -42,14 +42,15 @@ impl fmt::Display for Pot {
 
 #[derive(Hash)]
 #[derive(Eq)]
+#[derive(Clone)]
 struct State(Vec<Pot>);
 
 impl State {
     fn process(&self, rules: &HashSet<State>) -> State {
         let State(v) = self;
         let mut next : Vec<Pot> = Vec::new();
-        let beg_filler = vec![Pot::Empty; 5];
-        let end_filler = vec![Pot::Empty; 5];
+        let beg_filler = vec![Pot::Empty; 2];
+        let end_filler = vec![Pot::Empty; 3];
         let v : Vec<Pot> = beg_filler.iter().chain(v.iter()).chain(end_filler.iter()).map(|x| {x.clone()}).collect();
         
         for window in v.windows(5) {
@@ -57,6 +58,19 @@ impl State {
             next.push( if rules.contains(&s) { Pot::Plant } else { Pot::Empty } );
         }
         State(next)
+    }
+
+    fn value(&self, offset: i32) -> i32 {
+        let State(v) = self;
+        let iter = v.iter();
+        let mut sum = 0;
+        for (idx, pot) in (0..).zip(iter) {
+            if *pot == Pot::Plant {
+                let val = idx as i32 - offset as i32;
+                sum += val;
+            }
+        }
+        sum
     }
 }
 
@@ -144,27 +158,47 @@ fn main() -> io::Result<()> {
             }
         }
 
-        // process
-        const STEPS : usize = 20;
-        let mut cur_state = init_state;
-        for n in 0..STEPS {            
-            println!("{:02}: {}", n, cur_state);
+        // process        
+        const PART_1_STEPS : usize = 20;
+        let mut history = Vec::<i32>::new();
+        let mut cur_state = init_state.clone();
+        let mut step = 0;
+        for n in 0..PART_1_STEPS {
+            println!("{}: {}", n, cur_state);
             cur_state = cur_state.process(&rule_set);
+            step += 1;
         }
-        println!("{:02}: {}", STEPS, cur_state);
+        println!("{:02}: {}", PART_1_STEPS, cur_state);
         // at this point, state starts at -3 * STEPS
-        let State(v) = cur_state;
-        let iter = v.into_iter();
-        let mut sum = 0;
-        for (idx, pot) in (0..).zip(iter) {
-            if pot == Pot::Plant {
-                let val = idx as i32 - (3 * STEPS) as i32;
-                print!("{} ", val);
-                sum += val;
+        let part_1 = cur_state.value(3);
+        println!("Part 1: {}\n", part_1);
+
+        // Part 2 can't be brute forced. It's way way too many steps.
+        // We need to detect when we are just shifting to the right and
+        // determine how many more shifts we'll perform        
+        history.push(part_1);
+        let mut delta;
+        loop {
+            cur_state = cur_state.process(&rule_set);
+            step += 1;
+            history.push(cur_state.value(3));
+            while history.len() > 3 {
+                history.remove(0);
+            }
+            if history.len() == 3 {
+                if history[1] - history[0] == history[2] - history[1] {
+                    delta = history[2] - history[1];
+                    break;
+                }
             }
         }
-        println!("");
-        println!("Part 1: {}", sum);
+        let loop_init_value = cur_state.value(3) as i64;
+        println!("Found a loop at step {}, value = {}, delta = {}",
+                 step, loop_init_value, delta);
+        const PART_2_STEPS : i64 = 50000000000;
+        let steps_left = PART_2_STEPS - step;
+        let final_value = steps_left * delta as i64 + loop_init_value;
+        println!("Part 2: {}", final_value);
     }
     else {
         println!("Usage: {} <input_file>", prog_name.unwrap());
