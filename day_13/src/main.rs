@@ -6,6 +6,8 @@ use std::fs::File;
 use std::collections::HashMap;
 use std::fmt;
 
+#[derive(PartialEq)]
+#[derive(Eq)]
 #[derive(Debug)]
 enum Track {
     Vertical,
@@ -15,13 +17,16 @@ enum Track {
     RightTurn,
 }
 
+#[derive(PartialEq)]
+#[derive(Eq)]
 #[derive(Clone)]
 #[derive(Debug)]
 enum CartDirection {
     Right,
     Left,
     Up,
-    Down
+    Down,
+    Collision        
 }
 
 impl Track {
@@ -55,8 +60,7 @@ impl Track {
             Vertical => RightTurn,
             _ => { panic!("Bad track type for 'choice' {:?}", self) }
         }
-    }
-
+    }    
 }
 
 impl std::convert::From<char> for Track {
@@ -84,12 +88,14 @@ impl<'a> std::convert::From<&'a CartDirection> for Track {
         use Track::*;
         use CartDirection::*;
         match cart {
-            Down | Up  => Vertical,
-            Left | Right => Horizontal
+            Down | Up => Vertical,
+            Left | Right => Horizontal,
+            Collision => panic!("Not valid source for Track")
        }
     }
 }
 
+#[derive(Eq)]
 struct Cart((u32,u32), CartDirection, Track);
 
 impl Cart {
@@ -101,7 +107,8 @@ impl Cart {
             Down  => {*y = *y + 1;},
             Up    => {*y = *y - 1;},
             Right => {*x = *x + 1;},
-            Left  => {*x = *x - 1;}
+            Left  => {*x = *x - 1;},
+            Collision => {}
         };
     }
 
@@ -113,18 +120,48 @@ impl Cart {
             LeftTurn => {
                 match dir {
                     Up | Down => { dir.rotate_left(); },
-                    Left | Right => { dir.rotate_right(); }
+                    Left | Right => { dir.rotate_right(); },
+                    Collision => {}
                 }
             },
             RightTurn => {
                 match dir {
                     Up | Down => { dir.rotate_right(); },
-                    Left | Right => { dir.rotate_left(); },                    
+                    Left | Right => { dir.rotate_left(); },
+                    Collision => {}
                 }
             },
             Crossing => { choice.do_choice(dir); }
             _ => {}
         };
+    }
+}
+
+impl std::cmp::PartialOrd for Cart {
+    fn partial_cmp(&self, other: &Cart) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl std::cmp::PartialEq for Cart {
+    fn eq(&self, other: &Cart) -> bool {
+        let Cart((x0,y0),_,_) = self;
+        let Cart((x1,y1),_,_) = other;
+
+        x0 == x1 && y0 == y1
+    }
+}
+
+impl std::cmp::Ord for Cart {
+    fn cmp(&self, other: &Cart) -> std::cmp::Ordering {
+        let Cart((x0,y0),_,_) = self;
+        let Cart((x1,y1),_,_) = other;
+        if y0 == y1 {
+            x0.cmp(x1)
+        }
+        else {
+            y0.cmp(y1)
+        }
     }
 }
 
@@ -142,7 +179,8 @@ impl CartDirection {
             Down => Right,
             Up => Left,
             Right => Up,
-            Left => Down
+            Left => Down,
+            Collision => Collision                
         };
     }
     fn rotate_right(&mut self) {
@@ -151,7 +189,8 @@ impl CartDirection {
             Down => Left,
             Up => Right,
             Right => Down,
-            Left => Up
+            Left => Up,
+            Collision => Collision
         };
     }
 
@@ -161,7 +200,9 @@ impl CartDirection {
             Down => 'v',
             Up => '^',
             Right => '>',
-            Left => '<'
+            Left => '<',
+            Collision => 'X'
+                
         }
     }
 
@@ -183,7 +224,23 @@ impl std::convert::From<char> for CartDirection {
     }
 }
 
+// Returns the indices of the carts which are colliding
+fn check_collisions(cart_idx: usize,
+                    carts: &Vec<Cart>) -> Option<Vec<usize>> {
 
+    let Cart((x0, y0),_,_) = carts[cart_idx];
+    for (idx, Cart((x,y),dir,_)) in (0..).zip(carts.iter()) {
+        if x0 == *x && y0 == *y
+            && cart_idx != idx
+            && *dir != CartDirection::Collision { 
+                let mut result = vec![cart_idx, idx];
+                result.sort();
+                result.reverse();
+                return Some(vec![cart_idx, idx]);
+        }
+    }
+    None
+}
 
 fn main() -> io::Result<()> {
     let mut args = std::env::args();
@@ -227,12 +284,12 @@ fn main() -> io::Result<()> {
                 height = std::cmp::max(height, y);
             }
         }
-
+        println!("{} Carts found", carts.len());
+        /* Debug display with ncurses */
         ncurses::initscr();
         ncurses::raw();
         ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
         ncurses::erase();
-
         ncurses::mvprintw(0, 0, "Drawing grid...");
         for j in 0..height {
             for i in 0..width {
@@ -247,47 +304,73 @@ fn main() -> io::Result<()> {
         }
         ncurses::refresh();                
         let mut step = 0;
-        let x;
-        let y;
         
+        let mut crashes : Vec<(u32,u32)> = Vec::new();
         'main_loop: loop {
-            std::thread::sleep(std::time::Duration::from_millis(20));
+            
+            std::thread::sleep(std::time::Duration::from_millis(10));
             ncurses::mvprintw(0, 0, "Step ");
             ncurses::printw(&step.to_string());
             ncurses::clrtoeol();
-            for (idx, Cart((x0,y0),_,_)) in (0..).zip(carts.iter()) {
-                for Cart((x1,y1),_,_) in carts.iter().skip(idx + 1) {                
-                    if x0 == x1 && y0 == y1 {
-                        ncurses::mvprintw(*y0 as i32 + 1, *x0 as i32, "X");
-                        ncurses::mvprintw(height as i32 + 1, 0, "Collision!");
-                        ncurses::mvprintw(height as i32 + 1, 0, "[Press any key to exit]");
-                        ncurses::getch();
-                        x = *x0;
-                        y = *y0;
-                        println!("Part 1: {}, {}", x0, y0);
-                        break 'main_loop;
+            carts.sort();
+            for idx in 0..carts.len() {
+                let (oldx,oldy) = {let Cart((x,y), _,_) = carts[idx]; (x, y)};
+
+                carts[idx].do_move();
+                
+                if let Some(collisions) = check_collisions(idx, &carts) {
+                    for i in collisions {
+                        let Cart((x,y),ref mut dir,_) = carts[i];
+                        crashes.push((x,y));
+                        *dir = CartDirection::Collision;
                     }
                 }
-            }
-            for cart in carts.iter_mut() {
-                let (oldx,oldy) = {let Cart((x,y), _,_) = cart; (*x, *y)};
-                cart.do_move();
-                let (x,y, dir) = {let Cart((x,y), dir,_) = cart; (*x, *y, dir.clone())};
+                
+                let (x,y, dir) = {let Cart((x,y), ref dir,_) = carts[idx]; (x, y, dir.clone())};
+
                 ncurses::mvprintw(y as i32 + 1, x as i32, &dir.to_string());
+
                 if let Some(track) = grid.get(&(x,y)) {
-                    cart.do_rotate(track);
+                    carts[idx].do_rotate(track);
                 }
+
                 if let Some(old_track) = grid.get(&(oldx, oldy)) {
                     ncurses::mvprintw(oldy as i32 + 1,  oldx as i32,
                                       &old_track.to_string());
                 }
-                                      
             }
+            carts.retain(|Cart((_,_), dir, _)| { *dir != CartDirection::Collision });
+
+            ncurses::mvprintw(ncurses::LINES() - 1, 0, "Carts Left: ");            
+            ncurses::printw(&carts.len().to_string());
+            ncurses::clrtoeol();
             ncurses::refresh();
             step += 1;
+            
+            if carts.len() <= 1 {
+                break 'main_loop;
+            }
         }
+
+        ncurses::mvprintw(ncurses::LINES() - 1, 0,
+                          "Finished, press any key to continue...");
+        ncurses::getch();
         ncurses::endwin();
+
+        let (x,y) = crashes[0];
         println!("Part 1: {}, {}", x, y);
+
+        for (idx, (x,y)) in (0..).zip(crashes.iter()) {
+            println!("{}: ({},{})", idx, x, y);
+        }
+        println!("CARTS");
+        for (idx, Cart((x,y),_,_)) in (0..).zip(carts.iter()) {
+            println!("{}: ({},{})", idx, x, y);
+        }
+        if carts.len() > 0 {
+            let Cart((x,y),_,_) = carts[0];
+            println!("Part 2: {}, {}", x, y);
+        }
     }
     else {
         println!("Usage: {} <input_file>", prog_name.unwrap());
