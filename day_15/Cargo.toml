@@ -1,0 +1,7 @@
+[package]
+name = "day_15"
+version = "0.1.0"
+authors = ["Mark Pauley <mpauley@apple.com>"]
+
+[dependencies]
+ncurses = "5"
