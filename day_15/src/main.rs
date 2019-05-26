@@ -45,9 +45,15 @@ impl Unit {
     }
 }
 
+impl<'a> std::convert::From<&'a Unit> for char {
+    fn from(unit: &Unit) -> Self {
+        char::from(&unit.unit_type)
+    }
+}
+
 impl fmt::Display for Unit {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        char::from(&self.unit_type).fmt(fmt)
+        write!(fmt, "{}({})", char::from(self), self.hit_points)
     }
 }
 
@@ -76,7 +82,7 @@ impl fmt::Display for Cell {
         match self {
             Wall => '#'.fmt(fmt),
             Empty => '.'.fmt(fmt),
-            Occupied(ref unit) => unit.fmt(fmt)
+            Occupied(ref unit) => write!(fmt, "{}", char::from(unit))
         }
     }
 }
@@ -89,9 +95,9 @@ struct Board {
 
 impl Board {
     fn new(cells: Vec<Vec<Cell>>) -> Board {
-        let height = cells.len(); 
+        let height = cells.len();
         assert!(height > 0);
-        
+
         let width = cells[0].len();
         for row in cells.iter().skip(1) {
             assert!(row.len() == width);
@@ -104,7 +110,7 @@ impl Board {
         let mut cells : Vec<Vec<Cell>> = Vec::new();
 
         let mut buf : [u8; 1] = [0];
-        let mut cur_row : Vec<Cell> = Vec::new();        
+        let mut cur_row : Vec<Cell> = Vec::new();
         while input.read_exact(&mut buf).is_ok() {
             let c = buf[0] as char;
             if c == '\n' {
@@ -116,7 +122,7 @@ impl Board {
                 cur_row.push(Cell::new(c, point));
             }
         }
-        
+
         Board::new(cells)
     }
 
@@ -142,6 +148,17 @@ impl Board {
         result
     }
 
+    fn units_for_row<'a>(&'a self, row: usize) -> Vec<&'a Unit> {
+        self.cells[row].iter().filter_map(|cell| {
+            if let Cell::Occupied(u) = cell {
+                Some(u)
+            }
+            else {
+                None
+            }
+        }).collect()
+    }
+
     fn unit_coords(&self) -> Vec<Point> {
         self.units().into_iter().map(|u| { u.coords.clone() }).collect()
     }
@@ -152,6 +169,7 @@ trait Drawable {
     fn width(&self) -> usize;
     fn height(&self) -> usize;
     fn at<'a>(&self, point: &'a Point) -> String;
+    fn row_info(&self, row: usize) -> String;
 }
 
 trait Visuals<T> {
@@ -162,15 +180,32 @@ trait Visuals<T> {
 
 struct Display {
     sleep: u64,
-    interactive: bool
+    interactive: bool,
+    board_win: ncurses::WINDOW,
+    stats_win: ncurses::WINDOW
 }
 
 impl Display {
-    pub fn new(sleep: u64) -> Self {
+    pub fn new(board_width: i32, board_height: i32, sleep: u64) -> Self {
         Display {
             sleep: sleep,
-            interactive: false
+            interactive: false,
+            board_win: Display::create_board_win(board_width, board_height),
+            stats_win: Display::create_stats_win(board_width + 1, board_height)
         }
+    }
+
+    fn create_board_win(width: i32, height: i32) -> ncurses::WINDOW {
+        let win = ncurses::newwin(width, height, 0, 0);
+        ncurses::box_(win, 0, 0);
+        ncurses::wrefresh(win);
+        win
+    }
+
+    fn create_stats_win(x_offset: i32, height: i32) -> ncurses::WINDOW {
+        let win = ncurses::newwin(0, height, x_offset, 0);
+        ncurses::wrefresh(win);
+        win
     }
 
     pub fn interactive(mut self) -> Self {
@@ -186,6 +221,11 @@ impl Drawable for Board {
         let Point(x,y) = point;
         format!("{}", self.cells[*y as usize][*x as usize])
     }
+    fn row_info(&self, row: usize) -> String {
+        self.units_for_row(row).iter().map(|unit| {
+            format!("{}", unit) }
+        ).collect::<Vec<String>>().join(", ")
+    }
 }
 
 impl<T> Visuals<T> for Display where T: Drawable {
@@ -194,6 +234,7 @@ impl<T> Visuals<T> for Display where T: Drawable {
         ncurses::noecho();
         ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
     }
+
     fn done<'a,'b>(&mut self, what: &'a T) {
         ncurses::mvprintw(what.height() as i32, 0,
                           "Finished, press [enter] to exit...");
@@ -203,9 +244,11 @@ impl<T> Visuals<T> for Display where T: Drawable {
         }
         ncurses::endwin();
     }
+
     fn draw<'a>(&mut self, what: &'a T) {
         ncurses::erase();
-        
+
+        // Draw the board
         for i in 0..what.height() {
             for j in 0..what.width() {
                 ncurses::mvprintw(i as i32, j as i32,
@@ -213,35 +256,49 @@ impl<T> Visuals<T> for Display where T: Drawable {
             }
         }
 
-        // Draw the unit health        
+        // Draw the horizontal line
+        ncurses::mvvline(0, (what.width() + 1) as i32, '|' as u32, what.width() as i32);
+
+        // Draw the unit health
+        for row in 0..what.height() {
+            ncurses::mvprintw(row as i32, (what.width() + 3) as i32,
+                              &what.row_info(row));
+        }
+
         ncurses::refresh();
-        std::thread::sleep(std::time::Duration::from_millis(self.sleep));
+        if self.interactive {
+            let _ = ncurses::getch();
+        }
+        else {
+            std::thread::sleep(std::time::Duration::from_millis(self.sleep));
+        }
     }
 }
 
 fn main() -> io::Result<()> {
     let mut args = std::env::args();
     let prog_name = args.next();
-    
+
     if let Some(file_name) = args.next() {
         let mut f = File::open(file_name)?;
         let mut game_board = Board::parse(&mut f);
-        let mut d = Display::new(200);
+        let mut d = Display::new(game_board.width() as i32, game_board.height() as i32, 200);
         d.setup(&game_board);
-        d.draw(&game_board); 
+        d.draw(&game_board);
         loop {
             let coords = game_board.unit_coords();
             for point in coords {
                 let unit = game_board.at(&point);
             }
-            d.draw(&game_board); 
+            d.draw(&game_board);
+
+            // Need an end condition
         }
-        
-        d.done(&game_board);        
+        d.done(&game_board);
     }
     else {
         println!("Usage: {} <input_file>", prog_name.unwrap());
-    }    
+    }
 
     Ok(())
 }
