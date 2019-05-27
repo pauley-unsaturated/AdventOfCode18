@@ -6,6 +6,9 @@ use std::fs::File;
 use std::collections::HashMap;
 use std::fmt;
 
+
+#[derive(PartialEq)]
+#[derive(Clone)]
 enum UnitType {
     Goblin,
     Elf
@@ -136,16 +139,15 @@ impl Board {
         &mut self.cells[*y as usize][*x as usize]
     }
 
-    fn units<'a>(&'a self) -> Vec<&'a Unit> {
+    fn units<'a>(&'a self) -> impl Iterator<Item = &'a Unit> {
         let mut result = Vec::<&'a Unit>::new();
-        for row in self.cells.iter() {
-            for cell in row.iter() {
-                if let Cell::Occupied(u) = cell {
-                    result.push(u);
-                }
+
+        self.cells.iter().flat_map(|row| row.iter().filter_map(|cell| {
+            match cell {
+                Cell::Occupied(ref unit) => Some(unit),
+                _ => None
             }
-        }
-        result
+        }))
     }
 
     fn units_for_row<'a>(&'a self, row: usize) -> Vec<&'a Unit> {
@@ -160,9 +162,37 @@ impl Board {
     }
 
     fn unit_coords(&self) -> Vec<Point> {
-        self.units().into_iter().map(|u| { u.coords.clone() }).collect()
+        self.units().map(|u| { u.coords.clone() }).collect()
     }
 
+}
+
+
+// Game Rules
+
+enum Action<'a> {
+    None,
+    MoveTo(Point),
+    Attack(&'a Unit)
+}
+
+trait Attacker {
+    fn decide_move(&self, board: &Board) -> Action;
+}
+
+impl Unit {
+    fn targets<'a>(&self, board: &'a Board) -> impl Iterator<Item = &'a Self> {
+        let self_type = self.unit_type.clone();
+        board.units().filter(move |u| {u.unit_type != self_type})
+    }
+}
+
+
+impl Attacker for Unit {
+    fn decide_move(&self, board: &Board) -> Action {
+        Action::None
+    }
+    
 }
 
 trait Drawable {
@@ -181,31 +211,14 @@ trait Visuals<T> {
 struct Display {
     sleep: u64,
     interactive: bool,
-    board_win: ncurses::WINDOW,
-    stats_win: ncurses::WINDOW
 }
 
 impl Display {
-    pub fn new(board_width: i32, board_height: i32, sleep: u64) -> Self {
+    pub fn new(sleep: u64) -> Self {
         Display {
             sleep: sleep,
-            interactive: false,
-            board_win: Display::create_board_win(board_width, board_height),
-            stats_win: Display::create_stats_win(board_width + 1, board_height)
+            interactive: false
         }
-    }
-
-    fn create_board_win(width: i32, height: i32) -> ncurses::WINDOW {
-        let win = ncurses::newwin(width, height, 0, 0);
-        ncurses::box_(win, 0, 0);
-        ncurses::wrefresh(win);
-        win
-    }
-
-    fn create_stats_win(x_offset: i32, height: i32) -> ncurses::WINDOW {
-        let win = ncurses::newwin(0, height, x_offset, 0);
-        ncurses::wrefresh(win);
-        win
     }
 
     pub fn interactive(mut self) -> Self {
@@ -233,6 +246,8 @@ impl<T> Visuals<T> for Display where T: Drawable {
         ncurses::initscr();
         ncurses::noecho();
         ncurses::curs_set(ncurses::CURSOR_VISIBILITY::CURSOR_INVISIBLE);
+
+        // This would be a good place to set up windows if desired
     }
 
     fn done<'a,'b>(&mut self, what: &'a T) {
@@ -282,17 +297,20 @@ fn main() -> io::Result<()> {
     if let Some(file_name) = args.next() {
         let mut f = File::open(file_name)?;
         let mut game_board = Board::parse(&mut f);
-        let mut d = Display::new(game_board.width() as i32, game_board.height() as i32, 200);
+        let mut d = Display::new(200);
         d.setup(&game_board);
         d.draw(&game_board);
         loop {
             let coords = game_board.unit_coords();
+
+            // Next board state
             for point in coords {
                 let unit = game_board.at(&point);
             }
-            d.draw(&game_board);
 
+            d.draw(&game_board);
             // Need an end condition
+            
         }
         d.done(&game_board);
     }
