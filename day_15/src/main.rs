@@ -150,7 +150,11 @@ impl Board {
         }))
     }
 
-    fn units_for_row<'a>(&'a self, row: usize) -> Vec<&'a Unit> {
+    fn units_of_type<'a>(&'a self, unit_type: UnitType) -> impl Iterator<Item = &'a Unit> {
+	self.units().filter(move |unit| { unit.unit_type == unit_type })
+    }
+
+    fn units_for_row<'a>(&'a self, row: usize) -> impl Iterator<Item = &'a Unit> {
         self.cells[row].iter().filter_map(|cell| {
             if let Cell::Occupied(u) = cell {
                 Some(u)
@@ -158,13 +162,12 @@ impl Board {
             else {
                 None
             }
-        }).collect()
+        })
     }
 
-    fn unit_coords(&self) -> Vec<Point> {
-        self.units().map(|u| { u.coords.clone() }).collect()
+    fn neighbors<'a>(&'a self, point: Point) -> impl Iterator<Item = &'a Cell> {
+	
     }
-
 }
 
 
@@ -176,23 +179,27 @@ enum Action<'a> {
     Attack(&'a Unit)
 }
 
-trait Attacker {
-    fn decide_move(&self, board: &Board) -> Action;
-}
-
 impl Unit {
     fn targets<'a>(&self, board: &'a Board) -> impl Iterator<Item = &'a Self> {
         let self_type = self.unit_type.clone();
         board.units().filter(move |u| {u.unit_type != self_type})
     }
-}
-
-
-impl Attacker for Unit {
-    fn decide_move(&self, board: &Board) -> Action {
-        Action::None
+    fn in_range<'a>(&self, board:&'a Board) -> impl Iterator<Item = &'a Self> {
+	let visited : HashSet<Point> = HashSet::new();
+	self.targets(board).flat_map(move |unit| { 
+	    if !visited.contains(
+	})
     }
-    
+    fn decide_move(&self, board: &Board) -> Action {
+	let opposite_type = match (self.unit_type) {
+	    UnitType::Elf => UnitType::Goblin,
+	    UnitType::Goblin => UnitType::Elf
+	};
+	
+	let targets = self.targets(board);
+	let in_range_map = HashMap::new();
+    }
+
 }
 
 trait Drawable {
@@ -235,9 +242,9 @@ impl Drawable for Board {
         format!("{}", self.cells[*y as usize][*x as usize])
     }
     fn row_info(&self, row: usize) -> String {
-        self.units_for_row(row).iter().map(|unit| {
+        self.units_for_row(row).map(|unit| {
             format!("{}", unit) }
-        ).collect::<Vec<String>>().join(", ")
+        ).collect::<Vec<String>>().join(",")
     }
 }
 
@@ -301,12 +308,11 @@ fn main() -> io::Result<()> {
         d.setup(&game_board);
         d.draw(&game_board);
         loop {
-            let coords = game_board.unit_coords();
 
             // Next board state
-            for point in coords {
-                let unit = game_board.at(&point);
-            }
+	    for unit in game_board.units() {
+		
+	    }
 
             d.draw(&game_board);
             // Need an end condition
