@@ -5,3 +5,4 @@ authors = ["Mark Pauley <mpauley@apple.com>"]
 
 [dependencies]
 ncurses = "5"
+priority-queue = "0.7.0"

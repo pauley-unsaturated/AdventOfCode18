@@ -1,11 +1,16 @@
 extern crate ncurses;
+extern crate priority_queue;
 
 use std::io;
-use std::io::prelude::*;
 use std::fs::File;
+use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::cmp::Ordering;
 use std::fmt;
 
+
+use priority_queue::PriorityQueue;
 
 #[derive(PartialEq)]
 #[derive(Clone)]
@@ -29,8 +34,19 @@ const ATTACK_POW : u32 = 3;
 
 #[derive(PartialEq)]
 #[derive(Eq)]
+#[derive(PartialOrd)]
+#[derive(Hash)]
 #[derive(Clone)]
 struct Point(u32,u32);
+
+impl Ord for Point {
+    fn cmp(&self, other : &Point) -> Ordering {
+        match self.1.cmp(&other.1) {
+            Ordering::Equal => self.0.cmp(&other.0),
+            ordering => ordering
+        }
+    }
+}
 
 struct Unit {
     unit_type: UnitType,
@@ -109,7 +125,7 @@ impl Board {
         Board { width: width, height: height, cells: cells }
     }
 
-    fn parse<'a> (input: &'a mut std::io::Read) -> Board {
+    fn parse<'a> (input: &'a mut dyn std::io::Read) -> Board {
         let mut cells : Vec<Vec<Cell>> = Vec::new();
 
         let mut buf : [u8; 1] = [0];
@@ -165,8 +181,18 @@ impl Board {
         })
     }
 
-    fn neighbors<'a>(&'a self, point: Point) -> impl Iterator<Item = &'a Cell> {
-	
+    fn neighbors<'a>(&'a self, point: Point) -> impl Iterator<Item = &'a Point> {
+        let end_x = (self.width - 1) as u32;
+        let end_y = (self.height - 1) as u32;
+	match point {
+            Point(0, 0) => [Point(0,1), Point(1,0)].into_iter(),
+            Point(0, end_y) => [Point(0, end_y - 1), Point(1, end_y)].into_iter(),
+            Point(0, ref y) => [Point(0, *y - 1), Point(1, *y), Point(0, *y + 1)].into_iter(),
+            Point(end_x, 0) => [Point(end_x - 1, 0), Point(end_x, 1)].into_iter(),
+            Point(end_x, end_y) => [Point(end_x, end_y - 1), Point(end_x - 1, end_y)].into_iter(),
+            Point(end_x, ref y) => [Point(end_x, end_y - 1), Point(end_x - 1, *y), Point(end_x, *y + 1)].into_iter(),
+            Point(ref x, ref y) => [Point(*x, *y - 1), Point(*x - 1, *y), Point(*x + 1, *y), Point(*x, *y + 1)].into_iter()
+        }
     }
 }
 
@@ -184,20 +210,73 @@ impl Unit {
         let self_type = self.unit_type.clone();
         board.units().filter(move |u| {u.unit_type != self_type})
     }
-    fn in_range<'a>(&self, board:&'a Board) -> impl Iterator<Item = &'a Self> {
-	let visited : HashSet<Point> = HashSet::new();
-	self.targets(board).flat_map(move |unit| { 
-	    if !visited.contains(
-	})
+    fn in_range<'a>(&self, board:&'a Board) -> HashSet<Point> {
+	let mut visited : HashSet<&'a Point> = HashSet::new();
+        for unit in self.targets(board) {
+            for point in board.neighbors(unit.coords) {
+                match board.at(point) {
+                    Cell::Empty => { visited.insert(point); }
+                }
+            }
+        }
+        visited
     }
-    fn decide_move(&self, board: &Board) -> Action {
-	let opposite_type = match (self.unit_type) {
+
+    fn opposite_type(&self) -> UnitType {
+        match self.unit_type {
 	    UnitType::Elf => UnitType::Goblin,
 	    UnitType::Goblin => UnitType::Elf
-	};
-	
-	let targets = self.targets(board);
-	let in_range_map = HashMap::new();
+	}
+    }
+
+    fn decide_move<'a>(&self, board: &'a Board) -> Action<'a> {
+        // Check for attack
+        for point in board.neighbors(self.coords) {
+            match board.at(point) {
+                Cell::Occupied(ref unit) => {
+                    if unit.unit_type == self.opposite_type() {
+                        return Action::Attack(unit)
+                    }
+                }
+            }
+        }
+
+        // Otherwise determine target cell and attempt to move towards it
+        #[derive(Eq)]
+        #[derive(PartialEq)]
+        #[derive(PartialOrd)]
+        #[derive(Hash)]
+        struct Weight(u32,Point);
+        impl Ord for Weight {
+            fn cmp(&self, other: &Weight) -> Ordering {
+                match self.0.cmp(&other.0) {
+                    Ordering::Equal => self.1.cmp(&other.1),
+                    ordering => ordering
+                }
+            }
+        };
+
+        let ancestor : HashMap<Point,Point> = HashMap::new();
+
+        let move_targets = self.in_range(board);
+        let active_targets = PriorityQueue::new();
+
+        // Use A*
+        active_targets.push(self.coords, Weight(0, self.coords));
+        while let Some((next, weight)) = active_targets.pop() {
+            if move_targets.contains(&next) {
+                // need the first move on the way
+            }
+            else {
+                // push the neighbors that we haven't visited
+                for neighbor in board.neighbors(next) {
+                    if !ancestor.contains_key(neighbor)
+                        ancestor.insert(neighbor,next);
+                    }
+                }
+            }
+        }
+        Action::None
     }
 
 }
