@@ -25,6 +25,7 @@ use priority_queue::PriorityQueue;
 
 #[derive(PartialEq)]
 #[derive(Clone)]
+#[derive(Copy)]
 enum UnitType {
     Goblin,
     Elf
@@ -69,6 +70,7 @@ impl Ord for Point {
     }
 }
 
+#[derive(Clone)]
 struct Unit {
     unit_type: UnitType,
     coords: Point,
@@ -97,6 +99,7 @@ impl fmt::Display for Unit {
     }
 }
 
+#[derive(Clone)]
 enum Cell {
     Wall,
     Empty,
@@ -127,9 +130,13 @@ impl fmt::Display for Cell {
     }
 }
 
+#[derive(Clone)]
 struct Board {
     width: usize,
     height: usize,
+    elf_attack_pow: u32,
+    goblin_attack_pow: u32,
+    num_rounds: u32,
     cells: Vec<Vec<Cell>>
 }
 
@@ -143,7 +150,28 @@ impl Board {
             assert!(row.len() == width);
         }
 
-        Board { width: width, height: height, cells: cells }
+        Board { width: width, height: height,
+                elf_attack_pow: ATTACK_POW,
+                goblin_attack_pow: ATTACK_POW,
+                num_rounds: 0,
+                cells: cells }
+    }
+
+    fn complete_round (&mut self) { self.num_rounds += 1; }
+
+    fn set_attack_pow(&mut self, unit_type: UnitType, attack_pow: u32) {
+        let dest = match unit_type {
+            UnitType::Elf => &mut self.elf_attack_pow,
+            UnitType::Goblin => &mut self.goblin_attack_pow
+        };
+        *dest = attack_pow;
+    }
+
+    fn get_attack_pow(&self, unit_type: UnitType) -> u32 {
+        match unit_type {
+            UnitType::Elf => self.elf_attack_pow,
+            UnitType::Goblin => self.goblin_attack_pow
+        }
     }
 
     fn parse<'a> (input: &'a mut dyn std::io::Read) -> Board {
@@ -269,15 +297,16 @@ impl Board {
                 return Some(to);
             },
             Action::Attack(from, to) => {
-                if let Cell::Occupied(_) = self.at(from) { /* OK */ }
+                let mut attack_pow : u32;
+                if let Cell::Occupied(ref from) = self.at(from) { attack_pow = self.get_attack_pow(from.unit_type); }
                 else {
                     panic!("Attempting to use an unoccupied cell to attack ({},{})!", from.0, from.1);
                 }
                 let to = self.at_mut(to);
                 let mut dead = false;
                 if let Cell::Occupied(ref mut to) = to {
-                    if to.hit_points > ATTACK_POW {
-                        to.hit_points -= ATTACK_POW;
+                    if to.hit_points > attack_pow {
+                        to.hit_points -= attack_pow;
                     }
                     else {
                         // They ded
@@ -320,7 +349,7 @@ impl Unit {
 
     fn in_range<'a>(&self, board: &'a Board) -> impl Iterator<Item = Point> + 'a {
         self.targets(board).flat_map(move |unit| {
-            displayln!("Neighbors of {},{}", unit.coords.0, unit.coords.1);
+            //displayln!("Neighbors of {},{}", unit.coords.0, unit.coords.1);
             board.neighbors(&unit.coords).filter_map(move |point| {
                 //displayln!("{},{}", point.0, point.1);
                 match board.at(point) {
@@ -391,21 +420,23 @@ impl Unit {
         let mut active_targets : PriorityQueue<Point,Weight> = PriorityQueue::new();
 
         if move_targets.is_empty() {
-            displayln!("No Targets!");
+            //displayln!("No Targets!");
             return Action::None
         }
+        /*
         for target in move_targets.iter() {
             displayln!("Target {},{}", target.0, target.1);
         }
+        */
 
         // Currently, this uses flood-fill.. it should use A*
         active_targets.push(self.coords.clone(), Weight(0, self.coords.clone()));
         while let Some((next, weight)) = active_targets.pop() {
-            displayln!("Looking at {},{} ({})", (weight.1).0, (weight.1).1, weight.0);
+            //displayln!("Looking at {},{} ({})", (weight.1).0, (weight.1).1, weight.0);
             if move_targets.contains(&next) {
                 // Reached one of the targets
                 // need the first move on the way to the target
-                displayln!("Headed for {},{}({})", (weight.1).0, (weight.1).1, weight.0);
+                //displayln!("Headed for {},{}({})", (weight.1).0, (weight.1).1, weight.0);
                 let mut the_move = next;
                 while !possible_moves.contains(&the_move) {
                     match ancestor.get(&the_move) {
@@ -432,7 +463,7 @@ impl Unit {
                             panic!("Duplicate priorities: {},{}({})",
                                    (weight.1).0, (weight.1).1, weight.0);
                         }
-                        get_display().overlay(neighbor, "+");
+                        //get_display().overlay(neighbor, "+");
                     }
                 }
             }
@@ -534,8 +565,7 @@ impl<T> Visuals<T> for Display where T: Drawable {
     }
 
     fn done<'a,'b>(&mut self, what: &'a T) {
-        ncurses::mvprintw(what.height() as i32, 0,
-                          "Finished, press [enter] to exit...");
+        displayln!("Finished, press [enter] to exit...");
         loop {
             let c = ncurses::getch();
             if c == 10 { break; }
@@ -589,73 +619,115 @@ fn get_display() -> &'static mut Display {
     }
 }
 
+fn run_game(mut game_board: Board) -> Board {
+    let d = get_display();
+
+    d.setup(&game_board);
+    d.draw(&game_board);
+
+    let mut num_rounds = 0;
+    loop {
+        //d.clear_output();
+        // Next board state
+        let unit_coords = game_board.units().map(|unit| {
+            unit.coords
+        }).collect::<Vec<Point>>();
+
+	for unit_coord in unit_coords {
+            // Move phase
+            //displayln!("Decide move");
+            let action = {
+                let cell = game_board.at(unit_coord);
+                if let Cell::Occupied(unit) = cell {
+                    unit.decide_move(&game_board)
+                }
+                else {
+                    //displayln!("No Move");
+                    Action::None
+                }
+            };
+            //displayln!("Move Decided");
+
+            // Perform move
+            let new_pos = game_board.perform_action(action);
+            //d.draw(&game_board);
+
+            // Attack phase
+            let attack_pos = new_pos.unwrap_or(unit_coord);
+            //displayln!("Attack Pos = {}, {}", attack_pos.0, attack_pos.1);
+            let cell = game_board.at(attack_pos);
+
+            if let Cell::Occupied(unit) = cell {
+                if let Some(attack) = unit.decide_attack(&game_board) {
+                    game_board.perform_action(attack);
+                }
+            }
+            else {
+                //displayln!("No Attack");
+            }
+            //d.clear_output();
+	}
+        d.draw(&game_board);
+        //d.pause();
+        if game_board.is_over() {
+            break;
+        }
+        else {
+            game_board.complete_round ();
+        }
+    }
+    game_board
+}
+
 fn main() -> io::Result<()> {
     let mut args = std::env::args();
     let prog_name = args.next();
 
     if let Some(file_name) = args.next() {
         let mut f = File::open(file_name)?;
-        let mut game_board = Board::parse(&mut f);
+        let starting_board = Board::parse(&mut f);
+        
         //set_display(Display::new(10).interactive());
         set_display(Display::new(10));
 
         let d = get_display();
-        d.setup(&game_board);
-        d.draw(&game_board);
 
-        let mut num_rounds = 0;
-        loop {
-            d.clear_output();
-            // Next board state
-            let unit_coords = game_board.units().map(|unit| {
-                unit.coords
-            }).collect::<Vec<Point>>();
-
-	    for unit_coord in unit_coords {
-                // Move phase
-                displayln!("Decide move");
-                let action = {
-                    let cell = game_board.at(unit_coord);
-                    if let Cell::Occupied(unit) = cell {
-                        unit.decide_move(&game_board)
-                    }
-                    else {
-                        displayln!("No Move");
-                        Action::None
-                    }
-                };
-                displayln!("Move Decided");
-
-                // Perform move
-                let new_pos = game_board.perform_action(action);
-                d.draw(&game_board);
-
-                // Attack phase
-                let attack_pos = new_pos.unwrap_or(unit_coord);
-                displayln!("Attack Pos = {}, {}", attack_pos.0, attack_pos.1);
-                let cell = game_board.at(attack_pos);
-
-                if let Cell::Occupied(unit) = cell {
-                    if let Some(attack) = unit.decide_attack(&game_board) {
-                        game_board.perform_action(attack);
-                    }
-                }
-                else {
-                    displayln!("No Attack");
-                }
-                d.clear_output();
-	    }
-            d.draw(&game_board);
-            d.pause();
-            if game_board.is_over() { break; }
-            else { num_rounds += 1; }
+        // Part 1
+        {
+            let mut game_board = starting_board.clone();
+            game_board = run_game(game_board);
+            let hit_points = game_board.units().fold(0, {
+                |acc, unit|
+                acc + unit.hit_points
+            });
+            let outcome = game_board.num_rounds * hit_points;
+            displayln!("[Part 1] Outcome: {} + {} = {}",
+                       game_board.num_rounds, hit_points, outcome);
+            ncurses::getch();
         }
-        let hit_points = game_board.units().fold(0, {|acc, unit| acc + unit.hit_points});
-        let outcome = num_rounds * hit_points;
-        displayln!("Outcome: {} + {} = {}", num_rounds, hit_points, outcome);
-        ncurses::getch();
+        // Part 2
+        let mut elf_attack = ATTACK_POW;
+        let num_starting_elves = starting_board.units_of_type(UnitType::Elf).fold (0, {|acc,_| acc + 1});
+        loop {
+            elf_attack += 1;
+            let mut game_board = starting_board.clone();
+            game_board.set_attack_pow(UnitType::Elf, elf_attack);
+            game_board = run_game(game_board);
+            let num_elves = game_board.units_of_type(UnitType::Elf).fold (0, {|acc,_| acc + 1});
+            if num_elves == num_starting_elves {
+                let hit_points = game_board.units().fold(0, {
+                    |acc, unit|
+                    acc + unit.hit_points
+                });
+                let outcome = game_board.num_rounds * hit_points;
+                displayln!("[Part 2] Elf Attack = {}, Outcome: {} + {} = {}",
+                           elf_attack, game_board.num_rounds, hit_points, outcome);
+                ncurses::getch();
+                break;
+            }
+        }
+        d.done(&starting_board);
 
-        d.done(&game_board);
     }
     else {
         println!("Usage: {} <input_file>", prog_name.unwrap());
